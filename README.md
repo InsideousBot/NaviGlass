@@ -2,10 +2,11 @@
 
 NaviGlass is an assistive device powered by a Raspberry Pi that helps blind users navigate their environment using:
 - **YOLO11n Object Detection** - Real-time detection of people, vehicles, and objects
-- **Ultrasonic Distance Sensors** - Measures distances to detected objects
+- **Ultrasonic Distance Sensors** - Measures distances to detected objects  
 - **AI-Powered Narration** - Natural language descriptions using Google Gemini
 - **Text-to-Speech** - Audio feedback through Bluetooth or speakers
 - **Face Recognition** - Recognizes specific individuals by name
+- **Web Control Panel** - Browser-based interface for system management
 
 ## Features
 
@@ -35,9 +36,13 @@ NaviGlass is an assistive device powered by a Raspberry Pi that helps blind user
 - Easy enrollment with camera
 - Runs every 5 seconds to preserve performance
 
-### 🌐 Web Interface
-- Live video stream with bounding boxes
-- Access at `http://<raspberry-pi-ip>:5000`
+### 🌐 Web Control Panel
+- Live camera feed with object detection overlays
+- Real-time narration display
+- Face enrollment through browser
+- Database management (add/remove faces)
+- System status monitoring
+- Audio testing and control
 
 ## Hardware Requirements
 
@@ -143,9 +148,25 @@ The system will:
 4. Begin object detection and narration
 5. Start web server on port 5000
 
+**Access Web Interface**:
+Open browser and navigate to:
+- `http://naviglass.local:5000` (if hostname configured)
+- `http://<raspberry-pi-ip>:5000` (using IP address)
+
 Press `Ctrl+C` to shutdown gracefully.
 
 ### Face Enrollment
+
+**Method 1: Web Interface (Recommended)**
+
+1. Open web control panel: `http://<raspberry-pi-ip>:5000`
+2. Navigate to "👤 Enroll New Face" section
+3. Enter person's name
+4. Click "📸 Capture & Enroll"
+5. Position face in front of camera (3 second delay)
+6. Check status message for confirmation
+
+**Method 2: Command Line**
 
 Add faces to the recognition database:
 
@@ -154,44 +175,73 @@ Add faces to the recognition database:
 python3 enroll_face.py
 
 # Add from image file
-python3 enroll_face.py add "John Doe" /path/to/photo.jpg
+python3 enroll.py add "John Doe" /path/to/photo.jpg
 
 # List enrolled faces
-python3 enroll_face.py list
+python3 enroll.py list
 
 # Remove a face
-python3 enroll_face.py remove
+python3 enroll.py remove
 ```
 
 ### Face Database Management
 
 ```bash
 # List faces in database
-python3 face_database.py list
+python3 lib/face_database.py list
 
 # Add face from image
-python3 face_database.py add "Jane Smith" photo.jpg
+python3 lib/face_database.py add "Jane Smith" photo.jpg
 
 # Remove face
-python3 face_database.py remove "Jane Smith"
+python3 lib/face_database.py remove "Jane Smith"
 
 # Clear database
-python3 face_database.py clear
+python3 lib/face_database.py clear
 ```
+
+### Web Interface Features
+
+Access the control panel at `http://<raspberry-pi-ip>:5000`:
+
+**📹 Live Feed**
+- Real-time camera view with object detection boxes
+- Live narration display
+
+**👤 Face Enrollment**
+- Add new faces directly from browser
+- No command line needed
+
+**📚 Face Database**
+- View all enrolled faces
+- Delete faces with one click
+- See enrollment dates
+
+**🔊 Audio Control**
+- Test TTS functionality
+- Toggle narration on/off
+
+**⚙️ System Status**
+- Check TTS engine status
+- View Bluetooth connection
+- Monitor face recognition
 
 ## File Structure
 
 ```
 NaviGlass/
-├── objectDetection.py      # Main application
+├── objectDetection.py      # Main application (YOLO + Flask server)
 ├── bluetooth_audio.py      # Bluetooth audio manager
 ├── tts_engine.py           # Text-to-speech engine
 ├── face_database.py        # Face recognition database
 ├── enroll_face.py          # Face enrollment tool
 ├── requirements.txt        # Python dependencies
+├── .env                    # Environment configuration (your API keys)
 ├── .env.example            # Environment template
 ├── faces_database.json     # Face encodings (created automatically)
-└── yolo11n_ncnn_model/     # YOLO model files
+├── yolo11n_ncnn_model/     # YOLO model files
+├── README.md               # This file
+└── DEPLOYMENT.md           # Full deployment guide
 ```
 
 ## Troubleshooting

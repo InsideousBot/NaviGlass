@@ -1,7 +1,7 @@
 import time
 import cv2
 from picamera2 import Picamera2
-from flask import Flask, Response, jsonify # Used for web streaming
+from flask import Flask, Response, jsonify, request, render_template_string, send_file # Used for web streaming
 from ultralytics import YOLO
 import threading
 import google.generativeai as genai
@@ -300,6 +300,8 @@ def narrate_sentences_periodically(sentence_from_llm_func, interval_seconds: flo
 
                 if sentence:
                     print(f"[Narration]: {sentence}")
+                    # Store for web interface
+                    set_latest_narration(sentence)
                     # Speak using TTS engine
                     tts_engine.speak(sentence)
 
@@ -320,18 +322,443 @@ def sentence_from_llm_default(): # Default sentence producer (fallback if Gemini
 
 
 
-@app.route('/') # Serves the webpage
+# Global variable to store latest narration for web interface
+_latest_narration = ""
+_narration_lock = threading.Lock()
+
+def set_latest_narration(text):
+    global _latest_narration
+    with _narration_lock:
+        _latest_narration = text
+
+def get_latest_narration():
+    with _narration_lock:
+        return _latest_narration
+
+
+# HTML Template for Web Interface
+WEB_INTERFACE_HTML = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NaviGlass Control Panel</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+        .video-feed {
+            width: 100%;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+            margin-top: 10px;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        input[type="text"]:focus, input[type="file"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-weight: 600;
+        }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.info { background: #d1ecf1; color: #0c5460; }
+        .face-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 10px;
+            margin-top: 10px;
+        }
+        .face-item {
+            padding: 10px;
+            background: #f8f9fa;
+            margin-bottom: 8px;
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .face-item button {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .narration-display {
+            background: #f8f9fa;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 100px;
+            font-size: 18px;
+            color: #333;
+            text-align: center;
+            margin-top: 15px;
+        }
+        @media (max-width: 768px) {
+            h1 { font-size: 1.8em; }
+            .grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🕶️ NaviGlass Control Panel</h1>
+        
+        <div class="grid">
+            <!-- Live Feed -->
+            <div class="card" style="grid-column: span 2;">
+                <h2>📹 Live Camera Feed</h2>
+                <img src="/video_feed" class="video-feed" alt="Live Feed">
+                <div class="narration-display" id="narrationDisplay">
+                    <em>Waiting for narration...</em>
+                </div>
+            </div>
+            
+            <!-- Face Enrollment -->
+            <div class="card">
+                <h2>👤 Enroll New Face</h2>
+                <input type="text" id="faceName" placeholder="Enter person's name">
+                <button class="btn" onclick="captureAndEnroll()">📸 Capture & Enroll</button>
+                <div id="enrollStatus"></div>
+            </div>
+            
+            <!-- Face Database -->
+            <div class="card">
+                <h2>📚 Face Database</h2>
+                <button class="btn" onclick="loadFaces()">🔄 Refresh List</button>
+                <div class="face-list" id="faceList">
+                    <em>Click refresh to load faces</em>
+                </div>
+            </div>
+            
+            <!-- Audio Control -->
+            <div class="card">
+                <h2>🔊 Audio Control</h2>
+                <button class="btn" onclick="testAudio()">🎵 Test TTS</button>
+                <button class="btn" onclick="toggleNarration()">⏯️ Toggle Narration</button>
+                <div id="audioStatus"></div>
+            </div>
+            
+            <!-- System Status -->
+            <div class="card">
+                <h2>⚙️ System Status</h2>
+                <button class="btn" onclick="getStatus()">🔍 Check Status</button>
+                <div id="systemStatus"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Poll for latest narration
+        setInterval(async () => {
+            try {
+                const response = await fetch('/api/latest_narration');
+                const data = await response.json();
+                if (data.narration) {
+                    document.getElementById('narrationDisplay').innerHTML = 
+                        '<strong>' + data.narration + '</strong>';
+                }
+            } catch (error) {
+                console.error('Error fetching narration:', error);
+            }
+        }, 1000);
+        
+        async function captureAndEnroll() {
+            const name = document.getElementById('faceName').value.trim();
+            if (!name) {
+                showStatus('enrollStatus', 'Please enter a name', 'error');
+                return;
+            }
+            
+            showStatus('enrollStatus', 'Capturing face in 3 seconds...', 'info');
+            
+            try {
+                const response = await fetch('/api/enroll_face', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: name})
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showStatus('enrollStatus', '✅ ' + data.message, 'success');
+                    document.getElementById('faceName').value = '';
+                    loadFaces();
+                } else {
+                    showStatus('enrollStatus', '❌ ' + data.message, 'error');
+                }
+            } catch (error) {
+                showStatus('enrollStatus', '❌ Error: ' + error, 'error');
+            }
+        }
+        
+        async function loadFaces() {
+            try {
+                const response = await fetch('/api/list_faces');
+                const data = await response.json();
+                
+                const faceListDiv = document.getElementById('faceList');
+                if (data.faces.length === 0) {
+                    faceListDiv.innerHTML = '<em>No faces enrolled yet</em>';
+                } else {
+                    faceListDiv.innerHTML = data.faces.map(face => 
+                        `<div class="face-item">
+                            <span>${face.name}</span>
+                            <button onclick="deleteFace('${face.name}')">🗑️ Delete</button>
+                        </div>`
+                    ).join('');
+                }
+            } catch (error) {
+                console.error('Error loading faces:', error);
+            }
+        }
+        
+        async function deleteFace(name) {
+            if (!confirm('Delete ' + name + '?')) return;
+            
+            try {
+                const response = await fetch('/api/delete_face', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: name})
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    loadFaces();
+                } else {
+                    alert('Failed to delete: ' + data.message);
+                }
+            } catch (error) {
+                alert('Error: ' + error);
+            }
+        }
+        
+        async function testAudio() {
+            showStatus('audioStatus', 'Playing test audio...', 'info');
+            try {
+                const response = await fetch('/api/test_audio', {method: 'POST'});
+                const data = await response.json();
+                showStatus('audioStatus', '🔊 ' + data.message, 'success');
+            } catch (error) {
+                showStatus('audioStatus', '❌ Error: ' + error, 'error');
+            }
+        }
+        
+        async function toggleNarration() {
+            try {
+                const response = await fetch('/api/toggle_narration', {method: 'POST'});
+                const data = await response.json();
+                showStatus('audioStatus', data.message, 'info');
+            } catch (error) {
+                showStatus('audioStatus', '❌ Error: ' + error, 'error');
+            }
+        }
+        
+        async function getStatus() {
+            try {
+                const response = await fetch('/api/system_status');
+                const data = await response.json();
+                
+                const statusHTML = `
+                    <div class="status info">
+                        <strong>📊 System Information</strong><br>
+                        TTS: ${data.tts_running ? '✅ Running' : '❌ Stopped'}<br>
+                        Bluetooth: ${data.bluetooth_connected ? '✅ Connected' : '❌ Disconnected'}<br>
+                        Faces: ${data.faces_count} enrolled<br>
+                        Face Recognition: ${data.face_recognition_enabled ? '✅ Enabled' : '❌ Disabled'}
+                    </div>
+                `;
+                document.getElementById('systemStatus').innerHTML = statusHTML;
+            } catch (error) {
+                showStatus('systemStatus', '❌ Error: ' + error, 'error');
+            }
+        }
+        
+        function showStatus(elementId, message, type) {
+            const statusDiv = document.getElementById(elementId);
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 5000);
+        }
+        
+        // Load faces on page load
+        window.onload = () => {
+            loadFaces();
+            getStatus();
+        };
+    </script>
+</body>
+</html>
+'''
+
+
+@app.route('/') # Serves the web interface
 def index():
-    return """<html><body>
-                <h1>YOLO11n Live Stream</h1>
-                <img src='/video_feed'>
-              </body></html>"""
+    return render_template_string(WEB_INTERFACE_HTML)
 
 
 @app.route('/video_feed') # Generate the frames and feed it to the stream
 def video_feed():
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+@app.route('/api/latest_narration') # Get latest narration
+def api_latest_narration():
+    return jsonify({'narration': get_latest_narration()})
+
+
+@app.route('/api/enroll_face', methods=['POST']) # Enroll a new face
+def api_enroll_face():
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        
+        if not name:
+            return jsonify({'success': False, 'message': 'Name is required'})
+        
+        # Check if name already exists
+        if face_db.get_face_by_name(name):
+            return jsonify({'success': False, 'message': f'Face with name "{name}" already exists'})
+        
+        # Capture current frame
+        time.sleep(3)  # Give user time to position
+        frame = picam.capture_array()
+        
+        # Add to database
+        if face_db.add_face(name, image_array=frame):
+            # Update global face recognition status
+            global FACE_RECOGNITION_ENABLED
+            FACE_RECOGNITION_ENABLED = face_db.count() > 0
+            return jsonify({'success': True, 'message': f'Successfully enrolled {name}'})
+        else:
+            return jsonify({'success': False, 'message': 'No face detected in image'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/list_faces') # List all enrolled faces
+def api_list_faces():
+    faces = face_db.list_faces()
+    face_list = []
+    for name in faces:
+        face = face_db.get_face_by_name(name)
+        face_list.append({
+            'name': name,
+            'date_added': face.get('date_added', 'Unknown')
+        })
+    return jsonify({'faces': face_list})
+
+
+@app.route('/api/delete_face', methods=['POST']) # Delete a face
+def api_delete_face():
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        
+        if face_db.remove_face(name):
+            # Update global face recognition status
+            global FACE_RECOGNITION_ENABLED
+            FACE_RECOGNITION_ENABLED = face_db.count() > 0
+            return jsonify({'success': True, 'message': f'Deleted {name}'})
+        else:
+            return jsonify({'success': False, 'message': f'Face "{name}" not found'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/test_audio', methods=['POST']) # Test TTS
+def api_test_audio():
+    tts_engine.speak("NaviGlass text to speech test. Audio is working correctly.")
+    return jsonify({'success': True, 'message': 'Test audio played'})
+
+
+_narration_enabled = True
+@app.route('/api/toggle_narration', methods=['POST']) # Toggle narration
+def api_toggle_narration():
+    global _narration_enabled
+    _narration_enabled = not _narration_enabled
+    status = "enabled" if _narration_enabled else "disabled"
+    return jsonify({'success': True, 'message': f'Narration {status}'})
+
+
+@app.route('/api/system_status') # Get system status
+def api_system_status():
+    return jsonify({
+        'tts_running': tts_engine.is_running,
+        'bluetooth_connected': bluetooth_manager.is_connected(),
+        'faces_count': face_db.count(),
+        'face_recognition_enabled': FACE_RECOGNITION_ENABLED,
+        'gemini_enabled': GEMINI_ENABLED
+    })
 
 
 
