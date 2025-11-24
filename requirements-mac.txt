@@ -1,0 +1,12 @@
+# Mac-compatible dependencies for testing
+# Raspberry Pi-specific packages (RPi.GPIO, picamera2) excluded
+
+opencv-python
+flask
+ultralytics
+google-generativeai
+pyttsx3
+face_recognition
+dlib
+python-dotenv
+numpy

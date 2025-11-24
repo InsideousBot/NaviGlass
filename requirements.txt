@@ -1,0 +1,13 @@
+opencv-python
+picamera2
+flask
+ultralytics
+google-generativeai
+RPi.GPIO
+pyttsx3
+pybluez
+pyaudio
+face_recognition
+dlib
+python-dotenv
+numpy
